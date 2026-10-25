@@ -1,0 +1,8 @@
+{
+  "name": "olive-reading",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Olive Reading Program — student site + teacher dashboard",
+  "engines": { "node": ">=18" }
+}
