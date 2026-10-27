@@ -504,9 +504,12 @@ function vHome(){
 }
 
 async function vDash(){
-  const fresh=await dget("students/"+S.student.id); if(fresh) S.student={id:S.student.id,...fresh}; useLevel(stLevel(S.student)); bar();
+  const st0=S.student; useLevel(stLevel(st0));
+  let [fresh,...arr]=await Promise.all([dget("students/"+st0.id),...OPEN_UNITS.map(n=>dget(subPath(st0.id,n)))]);
+  if(fresh){ S.student={id:st0.id,...fresh}; if(stLevel(S.student)!==stLevel(st0)){ useLevel(stLevel(S.student)); arr=await Promise.all(OPEN_UNITS.map(n=>dget(subPath(st0.id,n)))); } }
+  bar();
   const st=S.student, subs={};
-  for(const n of OPEN_UNITS){ let x=await dget(subPath(st.id,n)); if(x&&x.cv!==CONTENT_VER) x=null; const loc=ls("olive_sub_"+st.id+"_L"+CUR_LEVEL+"_"+n); if(loc&&loc.cv===CONTENT_VER&&(!x||(loc._t||0)>(x._t||0))) x=loc; subs[n]=x; }
+  OPEN_UNITS.forEach((n,i)=>{ let x=arr[i]; if(x&&x.cv!==CONTENT_VER) x=null; const loc=ls("olive_sub_"+st.id+"_L"+CUR_LEVEL+"_"+n); if(loc&&loc.cv===CONTENT_VER&&(!x||(loc._t||0)>(x._t||0))) x=loc; subs[n]=x; });
   let q=0,c=0,r=0,w=0; OPEN_UNITS.forEach(n=>{const s=stepState(subs[n]); q+=s.quiz; c+=s.comp; r+=s.rec1+s.rec2; w+=s.write;});
   const total=q+c+r+w, TU=TOTAL_UNITS, TT=TU*5;
   const unlocked=n=>OPEN_UNITS.includes(n)&&(n===OPEN_UNITS[0]||unitDone(subs[n-1]));
@@ -617,27 +620,64 @@ function tComp(u){
    <div style="text-align:right;margin-top:16px"><button class="btn" data-a="cnext">${CQ.i<qs.length-1?"다음 문제 →":"결과 저장하기"}</button></div>`:""}`;
 }
 function tRec(u,n){
-  const r1=SUB.rec1, r2=SUB.rec2;
-  const sampleMis=u.cards.filter((_,k)=>k%3===1).map(c=>c.form||c.word);
-  const recBox=(key,title,inner,done)=>`<div class="rec ${done?"done":""}"><div class="row" style="justify-content:space-between"><span class="tag ${done?"t-ok":"t-no"}">${key==="rec1"?"녹음 1":"녹음 2"} · ${done?"완료":"대기"}</span></div><h3>${title}</h3>${inner}
-    <label class="btn ${done?"o":"g"} sm" style="align-self:flex-start;color:${done?"var(--ink)":"var(--accent-ink)"};margin:0">${done?"다시 녹음하기":"🎙 녹음하기 / 파일 올리기"}<input type="file" accept="audio/*" capture data-rec="${key}" hidden></label>
-    <audio id="aud_${key}" controls ${AUD[key]?`src="${AUD[key]}"`:"hidden"} style="width:100%"></audio>
-    ${done?`<p class="small" style="margin:0">✓ 저장됨 · ${esc(done.at)} · ${done.dur?Math.round(done.dur)+"초":""}</p>`:""}</div>`;
+  const r1=SUB.rec1, r2=SUB.rec2, canRec=!!(window.MediaRecorder&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+  const live=k=>REC.key===k;
+  const player=(k,d)=>AUD[k]?`<audio controls src="${AUD[k]}" style="width:100%"></audio>`:(d&&d.path?`<button class="btn o sm" data-a="playMine" data-k="${k}" style="align-self:flex-start">▶ 내 녹음 듣기</button><audio id="aud_${k}" controls hidden style="width:100%"></audio>`:"");
+  const ctrl=(k,d)=>live(k)?`<div class="row" style="gap:10px;align-items:center"><span class="tag t-red">● 녹음 중 <span id="recTime">0:00</span></span><button class="btn g sm" data-a="recStop">■ 녹음 끝내기</button></div>`
+    :`<div class="row" style="gap:8px;flex-wrap:wrap">${canRec?`<button class="btn ${d?"o":"g"} sm" data-a="recStart" data-k="${k}" ${REC.key?"disabled":""}>${d?"🎙 다시 녹음하기":"🎙 녹음 시작"}</button>`:""}<label class="btn o sm" style="margin:0">📁 녹음 파일 올리기<input type="file" accept="audio/*" data-rec="${k}" hidden></label></div>`;
+  const recBox=(key,title,inner,done,after)=>`<div class="rec ${done?"done":""}"><div class="row" style="justify-content:space-between"><span class="tag ${done?"t-ok":"t-no"}">${key==="rec1"?"녹음 1":"녹음 2"} · ${done?"완료":"대기"}</span></div><h3>${title}</h3>${inner}
+    ${ctrl(key,done)}${player(key,done)}
+    ${done?`<p class="small" style="margin:0">✓ 저장됨 · ${esc(done.at)}${done.dur?" · "+Math.round(done.dur)+"초":""}${done.path?"":" · <span style=\"color:var(--warn)\">녹음 파일은 이 기기에만 있어요</span>"}</p>`:""}${after||""}</div>`;
+  const tr=r2&&r2.transcript;
+  const srOk=!!(window.SpeechRecognition||window.webkitSpeechRecognition);
+  const liveTr=live("rec2")?`<div class="card" style="padding:12px 14px"><div class="small"><b>받아쓰는 중…</b></div><p id="recLive" style="margin:6px 0 0">${esc(REC.final||"")}</p></div>`:"";
+  const trBox=!live("rec2")&&r2?`<div class="card" style="padding:12px 14px"><div class="small"><b>내가 말한 내용</b> (자동 받아쓰기)</div><p style="margin:6px 0 0">${tr?esc(tr):`<span class="small">받아쓴 내용이 없어요${r2.name&&r2.name!=="mic"?" (파일로 올리면 받아쓰기가 되지 않아요)":""}.</span>`}</p></div>`:"";
   return `<div class="stack">
-  ${recBox("rec1","전체 지문 소리 내어 읽기",`<p class="small" style="margin:0">위 지문을 처음부터 끝까지 한 번 읽어 녹음하세요. 빨리 읽기보다 끊어 읽기와 또박또박 발음이 중요해요. 먼저 <b>🔊 지문 듣기</b>로 들어 봐도 좋아요.</p>`,r1)}
-  ${r1?`<div class="card" style="padding:16px 18px"><div class="row" style="justify-content:space-between"><b>내 발음 결과</b><span class="tag t-wait">표시 방식 예시</span></div>
-   <p class="small" style="margin:4px 0 8px">실제 사이트에서는 음성 인식이 녹음을 듣고 정확하지 않은 단어에 빨간 물결 밑줄을 그어요. 지금은 표시 모양을 보여 주는 예시예요.</p>
-   <p class="passage" style="font-size:16px">${hlPassage(u.passage,sampleMis,"mis")}</p></div>`:""}
-  ${recBox("rec2",`내 생각 말하기 <span class="small">(약 ${STIME[CUR_LEVEL]||"30초"})</span>`,`<div class="qbox">${esc(u.speaking)}</div><p class="small" style="margin:0">💡 이렇게 시작해 보세요</p><ul class="small" style="margin:0;padding-left:20px">${(u.speakStarters&&u.speakStarters.length?u.speakStarters:["I think … because …","For example, …"]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`,r2)}
-  <div class="note">녹음은 휴대폰에서는 바로 녹음 화면이 열리고, 컴퓨터에서는 녹음 파일을 골라 올려요. 이 체험판에는 제출 기록만 저장되고, 실제 사이트에서는 녹음 파일도 선생님께 전달돼요.</div>
-  <div class="row" style="justify-content:flex-end">${SUB.recSubmitted?`<span class="tag t-ok">✓ 녹음 과제 제출 완료</span>`:""}<button class="btn g" data-a="recSubmit" ${r1&&r2&&!SUB.recSubmitted?"":"disabled"}>과제 제출하기</button></div></div>`;
+  ${recBox("rec1","전체 지문 소리 내어 읽기",`<p class="small" style="margin:0">위 지문을 처음부터 끝까지 한 번 읽어 녹음하세요. 빨리 읽기보다 끊어 읽기와 또박또박 발음이 중요해요. 먼저 <b>🔊 지문 듣기</b>로 들어 봐도 좋아요.</p><p class="small" style="margin:0">📌 지문 녹음은 선생님이 듣고 확인할 거예요.</p>`,r1)}
+  ${recBox("rec2",`내 생각 말하기 <span class="small">(약 ${STIME[CUR_LEVEL]||"30초"})</span>`,`<div class="qbox">${esc(u.speaking)}</div><p class="small" style="margin:0">💡 이렇게 시작해 보세요</p><ul class="small" style="margin:0;padding-left:20px">${(u.speakStarters&&u.speakStarters.length?u.speakStarters:["I think … because …","For example, …"]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul><p class="small" style="margin:0">📌 녹음하면 내가 한 말이 글자로 나와요. 녹음과 받아쓴 내용은 선생님이 확인할 거예요.${srOk?"":" (이 브라우저는 자동 받아쓰기를 지원하지 않아요. 크롬이나 사파리를 써 주세요.)"}</p>`,r2,liveTr+trBox)}
+  <div class="note">🎙 녹음 시작을 누르고 마이크 사용을 허용해 주세요. 휴대폰 녹음 앱으로 녹음한 파일을 올려도 돼요 (이때는 자동 받아쓰기가 되지 않아요). 자동 받아쓰기는 실제로 말한 것과 조금 다를 수 있어요.</div>
+  <div class="row" style="justify-content:flex-end">${SUB.recSubmitted?`<span class="tag t-ok">✓ 녹음 과제 제출 완료</span>`:""}<button class="btn g" data-a="recSubmit" ${r1&&r2&&!SUB.recSubmitted&&!REC.key?"":"disabled"}>과제 제출하기</button></div></div>`;
 }
 const AUD={};
+const REC={key:null,mr:null,chunks:[],stream:null,t0:0,timer:null,sr:null,final:"",interim:""};
+// storage hooks (artifact: no file storage; deploy build replaces these)
+async function uploadRec(blob,key,ext){
+  const j=await api("/api/rec",{op:"upload",key,ext,level:CUR_LEVEL,unit:S.unit});
+  const r=await fetch(j.url,{method:"PUT",headers:{"Content-Type":blob.type||"audio/webm","x-upsert":"true"},body:blob});
+  if(!r.ok) throw new Error("upload "+r.status);
+  return j.path; }
+async function recUrl(path){ if(!path) return null; const j=await api("/api/rec",{op:"url",path}); return j.url; }
+function recExt(type){ type=type||""; return type.includes("mp4")||type.includes("m4a")?"m4a":type.includes("ogg")?"ogg":type.includes("mpeg")?"mp3":type.includes("wav")?"wav":"webm"; }
+async function saveRec(key,blob,name,dur,transcript){
+  AUD[key]=URL.createObjectURL(blob);
+  let path=null; try{ path=await uploadRec(blob,key,recExt(blob.type)); }catch(e){ console.warn(e); toast("녹음 파일을 서버에 올리지 못했어요. 다시 녹음해 주세요."); }
+  SUB[key]={name,dur:isFinite(dur)?dur:0,at:nowStr(),path:path||null,...(key==="rec2"?{transcript:(transcript||"").trim()}:{})};
+  SUB.recSubmitted=false; await persistSub(); toast(path?"녹음을 저장했어요":"녹음 기록을 저장했어요"); render();
+}
+async function recStart(key){
+  if(REC.key) return;
+  let stream; try{ stream=await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e){ toast("마이크를 쓸 수 없어요. 브라우저에서 마이크 사용을 허용해 주세요."); return; }
+  const mr=new MediaRecorder(stream); Object.assign(REC,{key,mr,chunks:[],stream,t0:Date.now(),final:"",interim:""});
+  mr.ondataavailable=e=>{ if(e.data&&e.data.size) REC.chunks.push(e.data); };
+  mr.onstop=async()=>{ const k=REC.key, dur=(Date.now()-REC.t0)/1000, blob=new Blob(REC.chunks,{type:mr.mimeType||"audio/webm"}), txt=(REC.final+" "+REC.interim).trim();
+    stream.getTracks().forEach(x=>x.stop()); clearInterval(REC.timer); Object.assign(REC,{key:null,mr:null,stream:null,sr:null});
+    await saveRec(k,blob,"mic",dur,txt); };
+  mr.start(1000);
+  if(key==="rec2"){ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(SR){ const sr=new SR(); sr.lang="en-US"; sr.continuous=true; sr.interimResults=true; REC.sr=sr;
+      sr.onresult=ev=>{ let fin="",inter=""; for(let i=ev.resultIndex;i<ev.results.length;i++){ const r=ev.results[i]; if(r.isFinal) fin+=r[0].transcript+" "; else inter+=r[0].transcript; }
+        if(fin) REC.final=(REC.final+" "+fin).replace(/\s+/g," ").trim(); REC.interim=inter; const el=$("#recLive"); if(el) el.textContent=(REC.final+" "+inter).trim(); };
+      sr.onend=()=>{ if(REC.key==="rec2"&&REC.sr===sr){ try{ sr.start(); }catch(e){} } };
+      sr.onerror=e=>{ if(e.error==="not-allowed"||e.error==="service-not-allowed") REC.sr=null; };
+      try{ sr.start(); }catch(e){} } }
+  REC.timer=setInterval(()=>{ const s=Math.floor((Date.now()-REC.t0)/1000), el=$("#recTime"); if(el) el.textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`; },500);
+  render();
+}
+function recStop(){ if(!REC.mr) return; const sr=REC.sr; REC.sr=null; if(sr){ try{ sr.stop(); }catch(e){} } setTimeout(()=>{ try{ REC.mr&&REC.mr.state!=="inactive"&&REC.mr.stop(); }catch(e){} },sr?400:0); }
 function onAudio(e,key){
   const f=e.target.files&&e.target.files[0]; if(!f) return;
-  const url=URL.createObjectURL(f); AUD[key]=url;
-  const a=new Audio(); a.src=url;
-  const done=async dur=>{ SUB[key]={name:f.name,dur:isFinite(dur)?dur:0,at:nowStr()}; SUB.recSubmitted=false; await persistSub(); toast("녹음을 저장했어요"); render(); };
+  const a=new Audio(); a.src=URL.createObjectURL(f);
+  const done=dur=>saveRec(key,f,f.name,dur,"");
   a.onloadedmetadata=()=>done(a.duration); a.onerror=()=>done(0);
 }
 function tWrite(u){
@@ -674,6 +714,7 @@ function tWrite(u){
   }
   return `<div class="stack">${stepsBar(cur?2:3)}
    <div class="grid2"><div class="sent-f"><div class="lab">👍 잘한 점</div>${esc(W.ai.good)}</div><div class="sent-w"><div class="lab">✏️ 고칠 점</div>${esc(W.ai.fix)}</div></div>
+   ${scoreBox(W.ai.scores)}
    ${curBox}
    <div class="preview"><b class="small">📄 내 2차 글 미리보기</b><br>${final}</div>
    <div class="note">💬 2차 글은 AI가 다시 평가하지 않아요. <b>선생님이 대시보드에서 1차 글·AI 첨삭·2차 글을 함께 확인해요.</b></div>
@@ -688,22 +729,41 @@ async function loadSub(){
 }
 async function persistSub(silent){ SUB.updatedAt=nowStr(); SUB._t=Date.now(); SUB.cv=CONTENT_VER; ls(localKey(),SUB); const ok=await save(subPath(S.student.id,S.unit),(({_unit,_sid,...x})=>x)({...SUB,studentId:S.student.id,studentName:S.student.name,unit:S.unit,level:CUR_LEVEL})); if(!silent&&!ok) return false; return ok; }
 
+function textProblem(text){
+  if(((text.match(/[가-힣]/g)||[]).length)>5) return "영어로 써 주세요. 한글이 들어 있어요.";
+  const words=text.match(/[A-Za-z']+/g)||[]; if(words.length<6) return "영어 문장을 조금 더 써 주세요.";
+  const letters=(text.match(/[A-Za-z]/g)||[]).length, nonSpace=text.replace(/\s/g,"").length; if(nonSpace&&letters/nonSpace<0.7) return "기호나 숫자가 너무 많아요. 영어 문장으로 써 주세요.";
+  if(/(.)\1{4,}/i.test(text)) return "같은 글자가 반복돼요. 의미 있는 영어 문장으로 써 주세요.";
+  const odd=words.filter(w=>w.length>=4&&!/[aeiouy]/i.test(w)).length; if(odd/words.length>0.2) return "알아볼 수 없는 단어가 많아요. 의미 있는 영어 문장으로 써 주세요.";
+  return "";
+}
+function evalPrompt(text,task,lexile,words){ return `You are a kind but careful English writing teacher for Korean students (reading level about ${lexile}L).
+Task prompt the student answered: "${task}"
+Key words from the reading: ${(words||[]).join(", ")}
+STEP 1. Decide if the text can be evaluated. Set "valid": false if ANY of these is true: it is mostly random letters, keyboard mashing, or repeated characters/symbols; it is mostly not English; it only repeats the task prompt; it has no meaningful English sentences. If valid is false, write a short Korean reason in "invalid_reason", and return empty "good", "fix", "scores", and "sentences".
+STEP 2. If valid: correct ONLY grammar, spelling, punctuation, word choice, and unclear sentence connections. Keep the student's ideas, sentence order, and sentence count. Do not make sentences more advanced than needed for this level. If a sentence is already correct, return it unchanged. Split the student's text into sentences exactly as written.
+STEP 3. Rate three areas from 1 to 3 for this level (3 = 잘함, 2 = 보통, 1 = 더 노력 필요), each with one short Korean comment:
+- grammar (문법): tense, agreement, sentence structure
+- vocabulary (어휘): word choice and variety; mention if the student used key words from the reading
+- topic (주제 연결): does the writing answer the task prompt and stay on topic? If it is off-topic, give 1 and say so clearly.
+Return ONLY JSON in this shape:
+{"valid":true,"invalid_reason":"","good":"한국어 1~2문장: 잘한 점 (구체적으로)","fix":"한국어 1~2문장: 가장 중요한 고칠 점","scores":{"grammar":{"score":3,"comment":"한국어 한 문장"},"vocabulary":{"score":2,"comment":"한국어 한 문장"},"topic":{"score":3,"comment":"한국어 한 문장"}},"sentences":[{"original":"student sentence exactly","corrected":"corrected sentence","why":"한국어 한 줄 설명 (고친 것이 없으면 빈 문자열)"}]}
+Student text:
+${text}`; }
+function normScores(s){ s=s||{}; const o={}; ["grammar","vocabulary","topic"].forEach(k=>{ const x=s[k]||{}; const n=Math.max(0,Math.min(3,parseInt(x.score,10)||0)); if(n) o[k]={score:n,comment:String(x.comment||"")}; }); return o; }
+function scoreBox(sc){ if(!sc||!Object.keys(sc).length) return ""; const L={grammar:"문법",vocabulary:"어휘",topic:"주제 연결"};
+  return `<div class="grid3" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">${["grammar","vocabulary","topic"].filter(k=>sc[k]).map(k=>`<div class="card" style="padding:12px 14px"><div class="row" style="justify-content:space-between"><b>${L[k]}</b><span class="tag ${sc[k].score>=3?"t-ok":sc[k].score===2?"t-wait":"t-red"}">${"●".repeat(sc[k].score)}${"○".repeat(3-sc[k].score)}</span></div><div class="small" style="margin-top:4px">${esc(sc[k].comment)}</div></div>`).join("")}</div>`; }
 async function evalWrite(){
   const b=$("#btnEval"), msg=$("#evalMsg"); const text=$("#draft1").value.trim(); SUB.writing.draft1=text;
+  const bad=textProblem(text); if(bad){ msg.innerHTML=`<span style="color:var(--warn)">⚠️ ${bad}</span>`; return; }
   b.disabled=true; msg.innerHTML=`<span class="spin"></span>AI가 글을 읽고 있어요…`;
   const u=UNITS[S.unit], m=unitMeta(S.unit);
-  const prompt=`You are a kind, careful English writing teacher for Korean elementary students (reading level about ${m.lexile}L).
-Task prompt the student answered: "${u.prompt}"
-Correct ONLY grammar, spelling, punctuation, word choice, and unclear sentence connections. Keep the student's ideas, sentence order, and sentence count. Do not make sentences more advanced than needed for this level. If a sentence is already correct, return it unchanged.
-Split the student's text into sentences exactly as written.
-Return ONLY JSON in this shape:
-{"good":"한국어 1~2문장: 잘한 점 (구체적으로)","fix":"한국어 1~2문장: 가장 중요한 고칠 점","sentences":[{"original":"student sentence exactly","corrected":"corrected sentence","why":"한국어 한 줄 설명 (고친 것이 없으면 빈 문자열)"}]}
-Student text:
-${text}`;
+  const prompt=evalPrompt(text,u.prompt,m.lexile,u.cards.map(c=>c.word));
   try{
-    const r=await api("/api/evaluate",{text,task:u.prompt,lexile:m.lexile});
+    const r=await api("/api/evaluate",{text,task:u.prompt,lexile:m.lexile,words:u.cards.map(c=>c.word)});
+    if(r&&r.valid===false){ b.disabled=false; msg.innerHTML=`<span style="color:var(--warn)">⚠️ 평가할 수 없는 글이에요. ${esc(String(r.invalid_reason||""))} 의미 있는 영어 문장으로 다시 써 주세요.</span>`; return; }
     if(!r||!Array.isArray(r.sentences)||!r.sentences.length) throw {code:"bad"};
-    SUB.writing.ai={good:String(r.good||""),fix:String(r.fix||""),sentences:r.sentences.map(s=>({original:String(s.original||""),corrected:String(s.corrected||s.original||""),why:String(s.why||"")}))};
+    SUB.writing.ai={good:String(r.good||""),fix:String(r.fix||""),scores:normScores(r.scores),sentences:r.sentences.map(s=>({original:String(s.original||""),corrected:String(s.corrected||s.original||""),why:String(s.why||"")}))};
     SUB.writing.rewrites={}; await persistSub(); render();
   }catch(e){ b.disabled=false; msg.textContent=e&&e.code==="rate_limited"?"잠시 쉬었다가 다시 눌러 주세요.":"평가를 받지 못했어요. 잠시 후 다시 눌러 주세요."+(e&&e.code?" ("+e.code+")":""); console.warn("eval failed",e); }
 }
@@ -840,21 +900,21 @@ async function tDetail(){
   const aiText=ai?ai.sentences.map(x=>x.corrected).join(" "):"";
   const d=ai?diff(W.draft1,aiText):null;
   const d2=ai&&W.draft2?diff(aiText,W.draft2):null;
-  const recRow=(k,t)=>`<div class="stat"><div class="k">${t}</div>${s[k]?`<div style="font-weight:700">✓ 제출 · ${esc(s[k].at)}</div><div class="small">${esc(s[k].name)} · ${s[k].dur?Math.round(s[k].dur)+"초":""}</div>`:`<div class="small">아직 없음</div>`}</div>`;
+  const recRow=(k,t)=>`<div class="stat stack" style="gap:6px"><div class="k">${t}</div>${s[k]?`<div style="font-weight:700">✓ 제출 · ${esc(s[k].at)}</div><div class="small">${s[k].dur?Math.round(s[k].dur)+"초":""}</div>${s[k].path?`<button class="btn o sm" data-a="tPlay" data-p="${esc(s[k].path)}" data-k="${k}" style="align-self:flex-start">▶ 듣기</button><audio id="taud_${k}" controls hidden style="width:100%"></audio>`:`<div class="small">녹음 파일 없음</div>`}${k==="rec2"&&s[k].transcript?`<div class="small"><b>받아쓰기</b><br>${esc(s[k].transcript)}</div>`:""}`:`<div class="small">아직 없음</div>`}</div>`;
   return `${back}<div class="row" style="justify-content:space-between;align-items:flex-end"><div><div class="eyebrow">${esc(st.name)} · ${lvLabel(CUR_LEVEL)} · Unit ${String(n).padStart(2,"0")}</div><h1>${esc(m.title)}</h1><p class="sub">마지막 저장 ${esc(s.updatedAt||"")}</p></div>
    <button class="btn ${s.checked?"o":"g"}" data-a="tCheckToggle">${s.checked?"검사 완료 취소":"✓ 검사 완료로 표시"}</button></div>
   <div class="grid2"><section class="card stack"><div class="row"><h3>① 단어</h3>${s.flash?`<span class="tag t-ok">카드 학습 ✓</span>`:`<span class="tag t-no">카드 전</span>`}${s.quiz?`<span class="tag t-ok">퀴즈 ${s.quiz.score} / ${u.vocab.length}</span>`:`<span class="tag t-no">퀴즈 미응시</span>`}</div>
     ${s.quiz&&s.quiz.wrong.length?`<div class="chips">${s.quiz.wrong.map(w=>`<span class="tag t-red">${esc(w)}</span>`).join("")}</div>`:s.quiz?`<p class="small" style="margin:0">모두 맞혔어요.</p>`:""}</section>
 </div>
   <div class="grid2"><section class="card stack"><h3>② 리딩 녹음</h3><div class="grid2">${recRow("rec1","지문 녹음")}${recRow("rec2","생각 말하기")}</div>
-    <p class="small" style="margin:0">질문: ${esc(u.speaking)}<br>체험판에는 녹음 파일이 저장되지 않아요. 실제 사이트에서는 여기서 바로 듣고, 발음이 틀린 단어와 답변 받아쓰기가 함께 보여요.</p></section>
+    <p class="small" style="margin:0">말하기 질문: ${esc(u.speaking)}</p></section>
    <section class="card stack"><div class="row"><h3>③ 독해 퀴즈</h3>${s.comp?`<span class="tag t-ok">${s.comp.score} / ${u.comp.length}</span>`:`<span class="tag t-no">미응시</span>`}</div>
     ${s.comp?(s.comp.wrong.length?`<div class="stack" style="gap:6px">${s.comp.wrong.map(k=>`<div class="small"><span class="tag t-red">${k+1}번 · ${esc(u.comp[k].type)}</span> ${esc(u.comp[k].q)}</div>`).join("")}</div>`:`<p class="small" style="margin:0">모두 맞혔어요.</p>`):""}</section></div>
   <section class="card stack"><h3>④ 라이팅</h3><p class="small" style="margin:0">${esc(u.prompt)}</p>
    ${!W.draft1?`<p class="small">아직 쓰지 않았어요.</p>`:`<div class="cols3"><div class="col"><h5 style="color:var(--warn)">1차 글</h5>${d?d.a:esc(W.draft1)}</div>
     <div class="col"><h5 style="color:var(--accent)">AI 첨삭</h5>${d?d.b:'<span class="small">아직 평가 전</span>'}</div>
     <div class="col"><h5>2차 글 (학생이 다시 쓴 글)</h5>${W.draft2?(d2?d2.b:esc(W.draft2)):'<span class="small">아직 제출 전</span>'}${d2&&d2.b.includes('class="add"')?`<p class="small" style="margin-top:6px">초록 표시 = AI 첨삭과 다른 부분 → 수업에서 확인</p>`:""}</div></div>
-    ${ai?`<div class="grid2"><div class="sent-f"><div class="lab">AI가 본 잘한 점</div>${esc(ai.good)}</div><div class="sent-w"><div class="lab">AI가 본 고칠 점</div>${esc(ai.fix)}</div></div>`:""}`}</section>`;
+    ${ai?`<div class="grid2"><div class="sent-f"><div class="lab">AI가 본 잘한 점</div>${esc(ai.good)}</div><div class="sent-w"><div class="lab">AI가 본 고칠 점</div>${esc(ai.fix)}</div></div>${scoreBox(ai.scores)}`:""}`}</section>`;
 }
 async function tStudents(){
   const studs=await dlist("students");
@@ -963,6 +1023,12 @@ document.addEventListener("click",async e=>{
     SUB.quiz={score:QZ.answers.filter(Boolean).length,total:vv.length,wrong:vv.filter((_,k)=>!QZ.answers[k]).map(x=>x[0]),at:nowStr()};
     Object.assign(QZ,{i:0,pick:null,answers:[]}); await persistSub(); toast("단어 퀴즈 결과를 저장했어요"); return render(); }
   if(a==="quizRetry"){ Object.assign(QZ,{i:0,pick:null,answers:[]}); SUB.quiz=null; return render(); }
+  if(a==="recStart"){ return recStart(el.dataset.k); }
+  if(a==="recStop"){ return recStop(); }
+  if(a==="playMine"||a==="tPlay"){ const k=el.dataset.k, path=a==="tPlay"?el.dataset.p:(SUB[k]&&SUB[k].path); el.disabled=true; el.textContent="불러오는 중…";
+    let url=null; try{ url=await recUrl(path); }catch(e){ console.warn(e); }
+    const au=$((a==="tPlay"?"#taud_":"#aud_")+k); if(!url||!au){ el.textContent="녹음 파일을 불러오지 못했어요"; return; }
+    au.src=url; au.hidden=false; el.remove(); try{ au.play(); }catch(e){} return; }
   if(a==="recSubmit"){ SUB.recSubmitted=true; await persistSub(); toast("녹음 과제를 제출했어요 · 독해 퀴즈로 넘어가요"); S.tab="comp"; return render(); }
   if(a==="evalWrite") return evalWrite();
   if(a==="rwCheck"){ const k=+el.dataset.k, val=$("#rw").value, s=SUB.writing.ai.sentences[k];
