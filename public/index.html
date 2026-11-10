@@ -795,7 +795,7 @@ async function evalWrite(){
 
 // ---------- level test (Set A–F by AR; teacher scores by hand) ----------
 let LT_SETS=[];
-const SETL="ABCDEF", SET_READY=["A", "B", "C"];
+const SETL="ABCDEF", SET_READY=["A", "B", "C", "D", "E", "F"];
 async function ltLoadSets(){ if(!LT_SETS.length){ try{ const j=await api("/api/lt",{op:"sets"}); LT_SETS=j.sets||[]; }catch(e){ console.warn(e); } } }
 const arToSet=ar=>{ ar=parseFloat(ar); if(isNaN(ar)) return null; return ar<=2?1:ar<=3?2:ar<=4?3:ar<=5?4:ar<=6?5:6; };
 const ltOk=st=>!st||!st.lt||st.lt.status==="확정";
